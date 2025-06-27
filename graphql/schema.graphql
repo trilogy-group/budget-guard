@@ -1,0 +1,332 @@
+type Query {
+  # Products
+  product(id: ID!): Product
+  products(filter: ProductFilter): ProductConnection!
+  
+  # Anomalies
+  anomaly(id: ID!): Anomaly
+  anomalies(filter: AnomalyFilter): AnomalyConnection!
+  
+  # Cost Analysis
+  costTrend(
+    productId: ID
+    groupBy: GroupBy!
+    dateRange: DateRangeInput!
+  ): [CostDataPoint!]!
+  
+  # Budget Performance
+  budgetPerformance(
+    productId: ID
+    period: Period!
+  ): BudgetPerformance!
+  
+  # Resource Mapping
+  resourceOwnership(arn: String!): ResourceOwnership
+}
+
+type Mutation {
+  # Anomaly Management
+  acknowledgeAnomaly(
+    id: ID!
+    notes: String
+  ): Anomaly!
+  
+  resolveAnomaly(
+    id: ID!
+    resolution: String!
+  ): Anomaly!
+  
+  # Manual Mapping Override
+  overrideResourceMapping(
+    arn: String!
+    productId: ID!
+    confidence: Confidence!
+  ): ResourceMapping!
+}
+
+type Subscription {
+  # Real-time anomaly detection
+  onAnomalyDetected(
+    productId: ID
+    severity: Severity
+  ): Anomaly!
+  
+  # Budget alerts
+  onBudgetThresholdCrossed(
+    productId: ID
+    threshold: Float
+  ): BudgetAlert!
+}
+
+# Core Types
+type Product {
+  id: ID!
+  name: String!
+  type: ProductType!
+  team: Team!
+  monthlyBudget: Float!
+  currentMonthSpend: Float!
+  targetReduction: Float
+  
+  # Relationships
+  accounts: [String!]!
+  repositories: [Repository!]!
+  components: [Component!]!
+  
+  # Metrics
+  dailyCosts(last: Int!): [DailyCost!]!
+  costByService(period: Period!): [ServiceCost!]!
+  
+  # Anomalies
+  anomalies(
+    status: AnomalyStatus
+    severity: Severity
+  ): AnomalyConnection!
+}
+
+type Anomaly {
+  id: ID!
+  product: Product!
+  type: AnomalyType!
+  severity: Severity!
+  status: AnomalyStatus!
+  costImpact: Float!
+  detectedAt: DateTime!
+  
+  # Context
+  resource: Resource!
+  investigationContext: InvestigationContext
+  probableCause: String
+  
+  # Assignment
+  assignedTeam: Team
+  acknowledgedBy: User
+  acknowledgedAt: DateTime
+  notes: String
+  
+  # Related
+  relatedAnomalies: [Anomaly!]!
+  suggestedActions: [String!]!
+}
+
+type Team {
+  id: ID!
+  name: String!
+  slackChannel: String
+  email: String
+  members: [User!]!
+}
+
+type User {
+  id: ID!
+  email: String!
+  name: String!
+  teams: [Team!]!
+}
+
+type Repository {
+  url: String!
+  name: String!
+  lastCommit: Commit
+}
+
+type Component {
+  name: String!
+  cost: Float!
+  resources: [Resource!]!
+}
+
+type Resource {
+  arn: String!
+  type: String!
+  service: String!
+  region: String!
+  tags: [Tag!]!
+  cost: Float!
+  createdAt: DateTime
+}
+
+type Tag {
+  key: String!
+  value: String!
+}
+
+type InvestigationContext {
+  recentDeployments: [Deployment!]!
+  recentCommits: [Commit!]!
+  configurationChanges: [ConfigChange!]!
+  relatedAnomalies: [Anomaly!]!
+}
+
+type Deployment {
+  id: String!
+  environment: String!
+  timestamp: DateTime!
+  creator: String!
+  ref: String!
+}
+
+type Commit {
+  sha: String!
+  message: String!
+  author: String!
+  timestamp: DateTime!
+}
+
+type ConfigChange {
+  eventName: String!
+  eventTime: DateTime!
+  username: String!
+  source: String!
+}
+
+type DailyCost {
+  date: Date!
+  cost: Float!
+  resourceCount: Int!
+}
+
+type ServiceCost {
+  service: String!
+  cost: Float!
+  percentage: Float!
+}
+
+type CostDataPoint {
+  timestamp: DateTime!
+  value: Float!
+  dimension: String
+}
+
+type BudgetPerformance {
+  period: String!
+  budget: Float!
+  spent: Float!
+  projected: Float!
+  percentageUsed: Float!
+  daysRemaining: Int!
+  trend: SpendingTrend!
+}
+
+type ResourceOwnership {
+  resource: Resource!
+  primaryProduct: Product!
+  confidence: Confidence!
+  consumers: [ProductAllocation!]
+  discoverySource: String!
+  lastValidated: DateTime!
+}
+
+type ProductAllocation {
+  product: Product!
+  allocation: Float!
+}
+
+type ResourceMapping {
+  arn: String!
+  productId: String!
+  confidence: Confidence!
+}
+
+type BudgetAlert {
+  product: Product!
+  threshold: Float!
+  currentSpend: Float!
+  projectedSpend: Float!
+  alertTime: DateTime!
+}
+
+# Connections for pagination
+type ProductConnection {
+  items: [Product!]!
+  nextToken: String
+  totalCount: Int!
+}
+
+type AnomalyConnection {
+  items: [Anomaly!]!
+  nextToken: String
+  totalCount: Int!
+}
+
+# Input Types
+input ProductFilter {
+  type: ProductType
+  teamId: ID
+  searchTerm: String
+}
+
+input AnomalyFilter {
+  productId: ID
+  type: AnomalyType
+  severity: Severity
+  status: AnomalyStatus
+  dateRange: DateRangeInput
+}
+
+input DateRangeInput {
+  start: Date!
+  end: Date!
+}
+
+# Enums
+enum ProductType {
+  ORGANIC
+  ACQUISITION
+}
+
+enum AnomalyType {
+  COST_SPIKE
+  NEW_RESOURCE
+  MISSING_RESOURCE
+  BUDGET_VIOLATION
+  UNTAGGED_RESOURCE
+  ORPHANED_RESOURCE
+  ACQUISITION_MISS
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum AnomalyStatus {
+  ACTIVE
+  ACKNOWLEDGED
+  INVESTIGATING
+  RESOLVED
+  FALSE_POSITIVE
+}
+
+enum Confidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum GroupBy {
+  SERVICE
+  COMPONENT
+  ACCOUNT
+  REGION
+}
+
+enum Period {
+  DAY
+  WEEK
+  MONTH
+  QUARTER
+  YEAR
+}
+
+enum SpendingTrend {
+  ACCELERATING
+  NORMAL
+  DECELERATING
+}
+
+# Scalar Types
+scalar Date
+scalar DateTime

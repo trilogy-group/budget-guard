@@ -1,0 +1,163 @@
+# AppSync Resolver Mapping Templates
+
+# Query.product
+productRequest: |
+  {
+    "version": "2017-02-28",
+    "operation": "GetItem",
+    "key": {
+      "PK": $util.dynamodb.toDynamoDBJson("PRODUCT#${ctx.args.id}"),
+      "SK": $util.dynamodb.toDynamoDBJson("METADATA")
+    }
+  }
+
+productResponse: |
+  #if($ctx.result)
+    $util.toJson($ctx.result)
+  #else
+    null
+  #end
+
+# Query.products
+productsRequest: |
+  #set($filter = {})
+  #if($ctx.args.filter.type)
+    #set($filter.type = $ctx.args.filter.type)
+  #end
+  {
+    "version": "2017-02-28",
+    "operation": "Scan",
+    "filter": {
+      "expression": "SK = :sk",
+      "expressionValues": {
+        ":sk": $util.dynamodb.toDynamoDBJson("METADATA")
+      }
+    },
+    "limit": 20,
+    "nextToken": #if($ctx.args.nextToken) "$ctx.args.nextToken" #else null #end
+  }
+
+# Query.anomaly
+anomalyRequest: |
+  {
+    "version": "2017-02-28",
+    "operation": "Query",
+    "query": {
+      "expression": "PK = :pk",
+      "expressionValues": {
+        ":pk": $util.dynamodb.toDynamoDBJson("ANOMALY#*#${ctx.args.id}")
+      }
+    },
+    "limit": 1
+  }
+
+# Query.anomalies
+anomaliesRequest: |
+  #set($indexName = "product-status-index")
+  #set($keyCondition = "productId = :productId")
+  #set($expressionValues = {})
+  
+  #if($ctx.args.filter.productId)
+    $util.qr($expressionValues.put(":productId", $util.dynamodb.toDynamoDBJson($ctx.args.filter.productId)))
+  #end
+  
+  #if($ctx.args.filter.status)
+    #set($keyCondition = "${keyCondition} AND #status = :status")
+    $util.qr($expressionValues.put(":status", $util.dynamodb.toDynamoDBJson($ctx.args.filter.status)))
+  #end
+  
+  {
+    "version": "2017-02-28",
+    "operation": "Query",
+    "index": "$indexName",
+    "query": {
+      "expression": "$keyCondition",
+      "expressionValues": $util.toJson($expressionValues)
+    },
+    "limit": 20,
+    "nextToken": #if($ctx.args.nextToken) "$ctx.args.nextToken" #else null #end
+  }
+
+# Query.costTrend
+costTrendRequest: |
+  ## This would be a Lambda resolver
+  {
+    "version": "2017-02-28",
+    "operation": "Invoke",
+    "payload": {
+      "field": "costTrend",
+      "arguments": $util.toJson($ctx.args),
+      "identity": $util.toJson($ctx.identity)
+    }
+  }
+
+# Mutation.acknowledgeAnomaly
+acknowledgeAnomalyRequest: |
+  #set($now = $util.time.nowISO8601())
+  {
+    "version": "2017-02-28",
+    "operation": "UpdateItem",
+    "key": {
+      "PK": $util.dynamodb.toDynamoDBJson("ANOMALY#*#${ctx.args.id}"),
+      "SK": $util.dynamodb.toDynamoDBJson("METADATA")
+    },
+    "update": {
+      "expression": "SET #status = :status, acknowledgedBy = :user, acknowledgedAt = :time, notes = :notes",
+      "expressionNames": {
+        "#status": "status"
+      },
+      "expressionValues": {
+        ":status": $util.dynamodb.toDynamoDBJson("ACKNOWLEDGED"),
+        ":user": $util.dynamodb.toDynamoDBJson($ctx.identity.username),
+        ":time": $util.dynamodb.toDynamoDBJson($now),
+        ":notes": $util.dynamodb.toDynamoDBJson($ctx.args.notes)
+      }
+    }
+  }
+
+# Mutation.resolveAnomaly
+resolveAnomalyRequest: |
+  #set($now = $util.time.nowISO8601())
+  {
+    "version": "2017-02-28",
+    "operation": "UpdateItem",
+    "key": {
+      "PK": $util.dynamodb.toDynamoDBJson("ANOMALY#*#${ctx.args.id}"),
+      "SK": $util.dynamodb.toDynamoDBJson("METADATA")
+    },
+    "update": {
+      "expression": "SET #status = :status, resolution = :resolution, resolvedAt = :time",
+      "expressionNames": {
+        "#status": "status"
+      },
+      "expressionValues": {
+        ":status": $util.dynamodb.toDynamoDBJson("RESOLVED"),
+        ":resolution": $util.dynamodb.toDynamoDBJson($ctx.args.resolution),
+        ":time": $util.dynamodb.toDynamoDBJson($now)
+      }
+    }
+  }
+
+# Subscription.onAnomalyDetected
+onAnomalyDetectedRequest: |
+  {
+    "version": "2017-02-28",
+    "payload": {
+      "filterGroup": [
+        {
+          "filters": [
+            {
+              "fieldName": "productId",
+              "operator": "eq",
+              "value": #if($ctx.args.productId) "$ctx.args.productId" #else "*" #end
+            },
+            {
+              "fieldName": "severity",
+              "operator": "eq",
+              "value": #if($ctx.args.severity) "$ctx.args.severity" #else "*" #end
+            }
+          ]
+        }
+      ]
+    }
+  }

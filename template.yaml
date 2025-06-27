@@ -1,0 +1,490 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 'Budget Guard - AI-driven AWS cost tracking and accountability system'
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 300
+    MemorySize: 512
+    Environment:
+      Variables:
+        PRODUCTS_TABLE: !Ref ProductsTable
+        METRICS_TABLE: !Ref MetricsTable
+        ANOMALIES_TABLE: !Ref AnomaliesTable
+        RESOURCE_MAPPING_TABLE: !Ref ResourceMappingTable
+        LOG_LEVEL: INFO
+
+Parameters:
+  SlackWebhookUrl:
+    Type: String
+    Description: Slack webhook URL for alerts
+    NoEcho: true
+    Default: ''
+  
+  PagerDutyToken:
+    Type: String
+    Description: PagerDuty API token
+    NoEcho: true
+    Default: ''
+  
+  PagerDutyServiceId:
+    Type: String
+    Description: PagerDuty service ID
+    Default: ''
+  
+  GitHubToken:
+    Type: String
+    Description: GitHub personal access token
+    NoEcho: true
+    Default: ''
+  
+  AlertEmail:
+    Type: String
+    Description: Email address for alerts
+    Default: ''
+
+Resources:
+  # DynamoDB Tables
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-products
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: teamId
+          AttributeType: S
+        - AttributeName: type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: team-index
+          KeySchema:
+            - AttributeName: teamId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: type-index
+          KeySchema:
+            - AttributeName: type
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+
+  MetricsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-metrics
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: productId
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: product-date-index
+          KeySchema:
+            - AttributeName: productId
+              KeyType: HASH
+            - AttributeName: date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+
+  AnomaliesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-anomalies
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: productId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: severity
+          AttributeType: S
+        - AttributeName: detectedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: product-status-index
+          KeySchema:
+            - AttributeName: productId
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: severity-date-index
+          KeySchema:
+            - AttributeName: severity
+              KeyType: HASH
+            - AttributeName: detectedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+
+  ResourceMappingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-resource-mapping
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: primaryProduct
+          AttributeType: S
+        - AttributeName: confidence
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: product-index
+          KeySchema:
+            - AttributeName: primaryProduct
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: confidence-index
+          KeySchema:
+            - AttributeName: confidence
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+
+  # Lambda Functions
+  ScoutFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: budget-guard-scout
+      CodeUri: scout/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          MASTER_ROLE_NAME: BudgetGuardRole
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Resource: 'arn:aws:iam::*:role/BudgetGuardRole'
+            - Effect: Allow
+              Action:
+                - ce:GetCostAndUsage
+                - ce:GetCostForecast
+                - tag:GetResources
+                - cloudformation:DescribeStacks
+                - cloudformation:ListStacks
+                - cloudformation:ListStackResources
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:BatchWriteItem
+                - dynamodb:Scan
+              Resource:
+                - !GetAtt ProductsTable.Arn
+                - !GetAtt MetricsTable.Arn
+                - !GetAtt ResourceMappingTable.Arn
+      Events:
+        HourlyTrigger:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 hour)
+            Description: Hourly resource discovery and cost collection
+        DailyTrigger:
+          Type: Schedule
+          Properties:
+            Schedule: cron(0 2 * * ? *)  # 2 AM UTC daily
+            Description: Daily cost aggregation
+
+  DetectiveFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: budget-guard-detective
+      CodeUri: detective/
+      Handler: app.lambda_handler
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:PutItem
+                - dynamodb:BatchWriteItem
+              Resource:
+                - !GetAtt ProductsTable.Arn
+                - !GetAtt MetricsTable.Arn
+                - !GetAtt AnomaliesTable.Arn
+                - !GetAtt ResourceMappingTable.Arn
+                - !Sub '${ProductsTable.Arn}/index/*'
+                - !Sub '${MetricsTable.Arn}/index/*'
+                - !Sub '${AnomaliesTable.Arn}/index/*'
+                - !Sub '${ResourceMappingTable.Arn}/index/*'
+      Events:
+        MetricsStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt MetricsTable.StreamArn
+            StartingPosition: LATEST
+            MaximumBatchingWindowInSeconds: 10
+
+  InvestigatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: budget-guard-investigator
+      CodeUri: investigator/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          GITHUB_TOKEN: !Ref GitHubToken
+          JENKINS_URL: ''
+          JENKINS_TOKEN: ''
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt ProductsTable.Arn
+                - !GetAtt AnomaliesTable.Arn
+                - !Sub '${AnomaliesTable.Arn}/index/*'
+            - Effect: Allow
+              Action:
+                - cloudtrail:LookupEvents
+              Resource: '*'
+      Events:
+        AnomaliesStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt AnomaliesTable.StreamArn
+            StartingPosition: LATEST
+            MaximumBatchingWindowInSeconds: 10
+
+  DispatcherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: budget-guard-dispatcher
+      CodeUri: dispatcher/
+      Handler: app.lambda_handler
+      Environment:
+        Variables:
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          PAGERDUTY_TOKEN: !Ref PagerDutyToken
+          PAGERDUTY_SERVICE_ID: !Ref PagerDutyServiceId
+          TEAMS_WEBHOOK_URL: ''
+          ALERT_EMAIL: !Ref AlertEmail
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource:
+                - !GetAtt ProductsTable.Arn
+                - !GetAtt AnomaliesTable.Arn
+                - !Sub '${AnomaliesTable.Arn}/index/*'
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: '*'
+      Events:
+        EnrichedAnomaliesStream:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt AnomaliesTable.StreamArn
+            StartingPosition: LATEST
+            MaximumBatchingWindowInSeconds: 30
+            FilterCriteria:
+              Filters:
+                - Pattern: '{"dynamodb": {"NewImage": {"context": {"M": {"enriched": {"BOOL": [true]}}}}}}'
+
+  # AppSync GraphQL API
+  GraphQLApi:
+    Type: AWS::AppSync::GraphQLApi
+    Properties:
+      Name: budget-guard-api
+      AuthenticationType: AMAZON_COGNITO_USER_POOLS
+      UserPoolConfig:
+        UserPoolId: !ImportValue budget-guard-cognito-UserPoolId
+        AwsRegion: !Ref AWS::Region
+        DefaultAction: ALLOW
+      AdditionalAuthenticationProviders:
+        - AuthenticationType: AWS_IAM
+      LogConfig:
+        CloudWatchLogsRoleArn: !GetAtt AppSyncLogsRole.Arn
+        FieldLogLevel: ERROR
+      XrayEnabled: true
+
+  AppSyncLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs
+
+  # GraphQL Schema
+  GraphQLSchema:
+    Type: AWS::AppSync::GraphQLSchema
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      DefinitionS3Location: graphql/schema.graphql
+
+  # Data Sources
+  ProductsDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Name: ProductsTable
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref ProductsTable
+        AwsRegion: !Ref AWS::Region
+
+  MetricsDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Name: MetricsTable
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref MetricsTable
+        AwsRegion: !Ref AWS::Region
+
+  AnomaliesDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt GraphQLApi.ApiId
+      Name: AnomaliesTable
+      Type: AMAZON_DYNAMODB
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      DynamoDBConfig:
+        TableName: !Ref AnomaliesTable
+        AwsRegion: !Ref AWS::Region
+
+  AppSyncServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: appsync.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt ProductsTable.Arn
+                  - !GetAtt MetricsTable.Arn
+                  - !GetAtt AnomaliesTable.Arn
+                  - !GetAtt ResourceMappingTable.Arn
+                  - !Sub '${ProductsTable.Arn}/index/*'
+                  - !Sub '${MetricsTable.Arn}/index/*'
+                  - !Sub '${AnomaliesTable.Arn}/index/*'
+                  - !Sub '${ResourceMappingTable.Arn}/index/*'
+
+Outputs:
+  GraphQLApiUrl:
+    Description: GraphQL API URL
+    Value: !GetAtt GraphQLApi.GraphQLUrl
+
+  GraphQLApiId:
+    Description: GraphQL API ID
+    Value: !GetAtt GraphQLApi.ApiId
+
+  ScoutFunctionArn:
+    Description: Scout Lambda function ARN
+    Value: !GetAtt ScoutFunction.Arn
+
+  DetectiveFunctionArn:
+    Description: Detective Lambda function ARN
+    Value: !GetAtt DetectiveFunction.Arn
+
+  InvestigatorFunctionArn:
+    Description: Investigator Lambda function ARN
+    Value: !GetAtt InvestigatorFunction.Arn
+
+  DispatcherFunctionArn:
+    Description: Dispatcher Lambda function ARN
+    Value: !GetAtt DispatcherFunction.Arn

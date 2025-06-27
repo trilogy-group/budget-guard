@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DynamoDB tables for Budget Guard system'
+
+Resources:
+  ProductsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-products
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: teamId
+          AttributeType: S
+        - AttributeName: type
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: team-index
+          KeySchema:
+            - AttributeName: teamId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: type-index
+          KeySchema:
+            - AttributeName: type
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+        - Key: Component
+          Value: Database
+
+  MetricsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-metrics
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: productId
+          AttributeType: S
+        - AttributeName: date
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: product-date-index
+          KeySchema:
+            - AttributeName: productId
+              KeyType: HASH
+            - AttributeName: date
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+        - Key: Component
+          Value: Database
+
+  AnomaliesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-anomalies
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: productId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: severity
+          AttributeType: S
+        - AttributeName: detectedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: product-status-index
+          KeySchema:
+            - AttributeName: productId
+              KeyType: HASH
+            - AttributeName: status
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: severity-date-index
+          KeySchema:
+            - AttributeName: severity
+              KeyType: HASH
+            - AttributeName: detectedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+        - Key: Component
+          Value: Database
+
+  ResourceMappingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: budget-guard-resource-mapping
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: primaryProduct
+          AttributeType: S
+        - AttributeName: confidence
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: product-index
+          KeySchema:
+            - AttributeName: primaryProduct
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: confidence-index
+          KeySchema:
+            - AttributeName: confidence
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Service
+          Value: BudgetGuard
+        - Key: Component
+          Value: Database
+
+Outputs:
+  ProductsTableName:
+    Description: Name of the Products table
+    Value: !Ref ProductsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductsTableName"
+
+  ProductsTableStreamArn:
+    Description: ARN of the Products table stream
+    Value: !GetAtt ProductsTable.StreamArn
+    Export:
+      Name: !Sub "${AWS::StackName}-ProductsTableStreamArn"
+
+  MetricsTableName:
+    Description: Name of the Metrics table
+    Value: !Ref MetricsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-MetricsTableName"
+
+  MetricsTableStreamArn:
+    Description: ARN of the Metrics table stream
+    Value: !GetAtt MetricsTable.StreamArn
+    Export:
+      Name: !Sub "${AWS::StackName}-MetricsTableStreamArn"
+
+  AnomaliesTableName:
+    Description: Name of the Anomalies table
+    Value: !Ref AnomaliesTable
+    Export:
+      Name: !Sub "${AWS::StackName}-AnomaliesTableName"
+
+  AnomaliesTableStreamArn:
+    Description: ARN of the Anomalies table stream
+    Value: !GetAtt AnomaliesTable.StreamArn
+    Export:
+      Name: !Sub "${AWS::StackName}-AnomaliesTableStreamArn"
+
+  ResourceMappingTableName:
+    Description: Name of the Resource Mapping table
+    Value: !Ref ResourceMappingTable
+    Export:
+      Name: !Sub "${AWS::StackName}-ResourceMappingTableName"

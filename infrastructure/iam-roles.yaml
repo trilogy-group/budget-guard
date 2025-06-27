@@ -1,0 +1,356 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM roles and permissions for Budget Guard multi-account access'
+
+Resources:
+  # Master account role for Budget Guard services
+  BudgetGuardMasterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BudgetGuardMasterRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BudgetGuardMasterPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Cross-account role assumption
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: 'arn:aws:iam::*:role/BudgetGuardRole'
+              
+              # Cost Explorer access
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:GetCostForecast
+                  - ce:GetReservationUtilization
+                  - ce:GetSavingsPlansUtilization
+                  - ce:GetRightsizingRecommendation
+                  - ce:GetAnomalies
+                  - ce:GetAnomalyMonitors
+                  - ce:GetAnomalySubscriptions
+                Resource: '*'
+              
+              # Organizations access (for account listing)
+              - Effect: Allow
+                Action:
+                  - organizations:ListAccounts
+                  - organizations:DescribeOrganization
+                  - organizations:ListTagsForResource
+                Resource: '*'
+              
+              # CloudTrail access
+              - Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                  - cloudtrail:GetEventSelectors
+                Resource: '*'
+              
+              # DynamoDB access
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:BatchGetItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/budget-guard-*'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/budget-guard-*/index/*'
+              
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              
+              # SES for email alerts
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: '*'
+
+  # Role to be deployed in each monitored account
+  BudgetGuardCrossAccountRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BudgetGuardRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt BudgetGuardMasterRole.Arn
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BudgetGuardReadOnlyPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Resource discovery
+              - Effect: Allow
+                Action:
+                  - tag:GetResources
+                  - tag:GetTagKeys
+                  - tag:GetTagValues
+                Resource: '*'
+              
+              # CloudFormation read access
+              - Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:ListStacks
+                  - cloudformation:ListStackResources
+                  - cloudformation:GetTemplate
+                Resource: '*'
+              
+              # EC2 read access
+              - Effect: Allow
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeImages
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeSubnets
+                  - ec2:DescribeAddresses
+                Resource: '*'
+              
+              # RDS read access
+              - Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:DescribeDBSnapshots
+                  - rds:ListTagsForResource
+                Resource: '*'
+              
+              # S3 read access
+              - Effect: Allow
+                Action:
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLocation
+                  - s3:GetBucketTagging
+                  - s3:GetBucketVersioning
+                  - s3:GetLifecycleConfiguration
+                Resource: '*'
+              
+              # Lambda read access
+              - Effect: Allow
+                Action:
+                  - lambda:ListFunctions
+                  - lambda:GetFunction
+                  - lambda:ListTags
+                Resource: '*'
+              
+              # DynamoDB read access
+              - Effect: Allow
+                Action:
+                  - dynamodb:ListTables
+                  - dynamodb:DescribeTable
+                  - dynamodb:ListTagsOfResource
+                Resource: '*'
+              
+              # ECS/EKS read access
+              - Effect: Allow
+                Action:
+                  - ecs:ListClusters
+                  - ecs:ListServices
+                  - ecs:ListTasks
+                  - ecs:DescribeClusters
+                  - ecs:DescribeServices
+                  - ecs:DescribeTasks
+                  - eks:ListClusters
+                  - eks:DescribeCluster
+                Resource: '*'
+              
+              # ElasticCache read access
+              - Effect: Allow
+                Action:
+                  - elasticache:DescribeCacheClusters
+                  - elasticache:ListTagsForResource
+                Resource: '*'
+              
+              # CloudWatch read access
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:GetMetricData
+                Resource: '*'
+              
+              # Config read access (if available)
+              - Effect: Allow
+                Action:
+                  - config:DescribeConfigurationRecorders
+                  - config:DescribeConfigRules
+                  - config:GetResourceConfigHistory
+                  - config:ListDiscoveredResources
+                Resource: '*'
+
+  # Lambda execution role for GraphQL resolvers
+  GraphQLResolverRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BudgetGuardGraphQLResolverRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: GraphQLResolverPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/budget-guard-*'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/budget-guard-*/index/*'
+              - Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::aws-athena-query-results-${AWS::AccountId}-${AWS::Region}/*'
+
+  # Service-linked role for DynamoDB Streams
+  DynamoDBStreamsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: BudgetGuardDynamoDBStreamsRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole
+      Policies:
+        - PolicyName: StreamsProcessingPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/budget-guard-*/stream/*'
+
+Outputs:
+  BudgetGuardMasterRoleArn:
+    Description: ARN of the Budget Guard master role
+    Value: !GetAtt BudgetGuardMasterRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-MasterRoleArn"
+
+  BudgetGuardCrossAccountRoleArn:
+    Description: ARN of the Budget Guard cross-account role
+    Value: !GetAtt BudgetGuardCrossAccountRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-CrossAccountRoleArn"
+
+  GraphQLResolverRoleArn:
+    Description: ARN of the GraphQL resolver role
+    Value: !GetAtt GraphQLResolverRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-GraphQLResolverRoleArn"
+
+  # CloudFormation template for monitored accounts
+  CrossAccountRoleTemplate:
+    Description: CloudFormation template to deploy in monitored accounts
+    Value: !Sub |
+      {
+        "AWSTemplateFormatVersion": "2010-09-09",
+        "Description": "Budget Guard cross-account access role",
+        "Resources": {
+          "BudgetGuardRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+              "RoleName": "BudgetGuardRole",
+              "AssumeRolePolicyDocument": {
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Principal": {
+                    "AWS": "${BudgetGuardMasterRole.Arn}"
+                  },
+                  "Action": "sts:AssumeRole"
+                }]
+              },
+              "Policies": [{
+                "PolicyName": "BudgetGuardReadOnlyPolicy",
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [{
+                    "Effect": "Allow",
+                    "Action": [
+                      "tag:GetResources",
+                      "cloudformation:Describe*",
+                      "cloudformation:List*",
+                      "ec2:Describe*",
+                      "rds:Describe*",
+                      "s3:List*",
+                      "s3:GetBucketTagging",
+                      "lambda:List*",
+                      "lambda:GetFunction",
+                      "dynamodb:ListTables",
+                      "dynamodb:DescribeTable",
+                      "ecs:List*",
+                      "ecs:Describe*",
+                      "eks:List*",
+                      "eks:Describe*",
+                      "elasticache:Describe*",
+                      "cloudwatch:GetMetric*",
+                      "cloudwatch:ListMetrics"
+                    ],
+                    "Resource": "*"
+                  }]
+                }
+              }]
+            }
+          }
+        }
+      }
