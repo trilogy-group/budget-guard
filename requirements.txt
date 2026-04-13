@@ -25,7 +25,7 @@ python-dotenv==1.0.0
 orjson==3.9.10
 
 # Testing
-pytest==7.4.3
+pytest==9.0.3
 pytest-asyncio==0.21.1
 moto==4.2.9
 pytest-mock==3.12.0
